@@ -406,6 +406,9 @@ impl<'cfg> RegistryIndex<'cfg> {
             // leak throguh if they're in a whitelist (aka if they were
             // previously in `Cargo.lock`
             .filter(|s| !s.yanked || yanked_whitelist.contains(&s.summary.package_id()))
+            // Filter the ones removed by the hook
+            // https://github.com/est31/cargo/commit/6ce9b611903b9be85cc6ad76a8eea09f7767d22b
+            .filter(|s| super::hook::resolver_hook(s.summary.package_id()))
             .map(|s| s.summary.clone());
 
         // Handle `cargo update --precise` here. If specified, our own source

@@ -383,6 +383,7 @@ pub enum MaybeLock {
 mod index;
 mod local;
 mod remote;
+mod hook;
 
 fn short_name(id: SourceId) -> String {
     let hash = hex::short_hash(&id);
