@@ -22,6 +22,7 @@ rental! {
 
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind")]
+#[serde(rename_all = "lowercase")]
 enum HookConfig {
     Process { path: String },
     Plugin { path: String },
