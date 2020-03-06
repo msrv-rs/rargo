@@ -180,6 +180,8 @@ use crate::util::hex;
 use crate::util::into_url::IntoUrl;
 use crate::util::{CargoResult, Config, Filesystem};
 
+use self::hook::Hook;
+
 const PACKAGE_SOURCE_LOCK: &str = ".cargo-ok";
 pub const CRATES_IO_INDEX: &str = "https://github.com/rust-lang/crates.io-index";
 pub const CRATES_IO_REGISTRY: &str = "crates-io";
@@ -194,6 +196,7 @@ pub struct RegistrySource<'cfg> {
     ops: Box<dyn RegistryData + 'cfg>,
     index: index::RegistryIndex<'cfg>,
     yanked_whitelist: HashSet<PackageId>,
+    hook: Hook,
 }
 
 #[derive(Deserialize)]
@@ -420,6 +423,7 @@ impl<'cfg> RegistrySource<'cfg> {
         ops: Box<dyn RegistryData + 'cfg>,
         yanked_whitelist: &HashSet<PackageId>,
     ) -> RegistrySource<'cfg> {
+        let hook = Hook::from_config(config).expect("can't create hook");
         RegistrySource {
             src_path: config.registry_source_path().join(name),
             config,
@@ -428,6 +432,7 @@ impl<'cfg> RegistrySource<'cfg> {
             index: index::RegistryIndex::new(source_id, ops.index_path(), config),
             yanked_whitelist: yanked_whitelist.clone(),
             ops,
+            hook,
         }
     }
 
@@ -554,7 +559,7 @@ impl<'cfg> Source for RegistrySource<'cfg> {
                         called = true;
                         f(s);
                     }
-                })?;
+                }, &mut self.hook)?;
             if called {
                 return Ok(());
             } else {
@@ -568,12 +573,12 @@ impl<'cfg> Source for RegistrySource<'cfg> {
                 if dep.matches(&s) {
                     f(s);
                 }
-            })
+            }, &mut self.hook)
     }
 
     fn fuzzy_query(&mut self, dep: &Dependency, f: &mut dyn FnMut(Summary)) -> CargoResult<()> {
         self.index
-            .query_inner(dep, &mut *self.ops, &self.yanked_whitelist, f)
+            .query_inner(dep, &mut *self.ops, &self.yanked_whitelist, f, &mut self.hook)
     }
 
     fn supports_checksums(&self) -> bool {

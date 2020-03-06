@@ -78,6 +78,8 @@ use std::fs;
 use std::path::Path;
 use std::str;
 
+use super::hook::Hook;
+
 /// Crates.io treats hyphen and underscores as interchangeable, but the index and old Cargo do not.
 /// Therefore, the index must store uncanonicalized version of the name so old Cargo's can find it.
 /// This loop tries all possible combinations of switching hyphen and underscores to find the
@@ -362,9 +364,10 @@ impl<'cfg> RegistryIndex<'cfg> {
         load: &mut dyn RegistryData,
         yanked_whitelist: &HashSet<PackageId>,
         f: &mut dyn FnMut(Summary),
+        hook: &mut Hook,
     ) -> CargoResult<()> {
         if self.config.offline()
-            && self.query_inner_with_online(dep, load, yanked_whitelist, f, false)? != 0
+            && self.query_inner_with_online(dep, load, yanked_whitelist, f, hook, false)? != 0
         {
             return Ok(());
             // If offline, and there are no matches, try again with online.
@@ -376,7 +379,7 @@ impl<'cfg> RegistryIndex<'cfg> {
             // indicating that the required dependency is unavailable while
             // offline will be displayed.
         }
-        self.query_inner_with_online(dep, load, yanked_whitelist, f, true)?;
+        self.query_inner_with_online(dep, load, yanked_whitelist, f, hook, true)?;
         Ok(())
     }
 
@@ -386,6 +389,7 @@ impl<'cfg> RegistryIndex<'cfg> {
         load: &mut dyn RegistryData,
         yanked_whitelist: &HashSet<PackageId>,
         f: &mut dyn FnMut(Summary),
+        hook: &mut Hook,
         online: bool,
     ) -> CargoResult<usize> {
         let source_id = self.source_id;
@@ -406,9 +410,8 @@ impl<'cfg> RegistryIndex<'cfg> {
             // leak throguh if they're in a whitelist (aka if they were
             // previously in `Cargo.lock`
             .filter(|s| !s.yanked || yanked_whitelist.contains(&s.summary.package_id()))
-            // Filter the ones removed by the hook
-            // https://github.com/est31/cargo/commit/6ce9b611903b9be85cc6ad76a8eea09f7767d22b
-            .filter(|s| super::hook::resolver_hook(s.summary.package_id()))
+            // Filter the crates removed by the hook
+            .filter(|s| hook.hook(s.summary.package_id()).expect("can't call resolver hook"))
             .map(|s| s.summary.clone());
 
         // Handle `cargo update --precise` here. If specified, our own source
