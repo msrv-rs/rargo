@@ -30,6 +30,9 @@
 // https://github.com/rust-lang/cargo/pull/7251#pullrequestreview-274914270
 #![allow(clippy::identity_conversion)]
 
+#[macro_use]
+extern crate rental;
+
 use crate::core::shell::Verbosity::Verbose;
 use crate::core::Shell;
 use anyhow::Error;
