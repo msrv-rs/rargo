@@ -96,7 +96,11 @@ struct HookPlugin {
 
 impl HookPlugin {
     fn new(path: &str, params: &Option<toml::Value>) -> CargoResult<Self> {
-        let params_str = toml::to_string(params)?;
+        let params_str = if let Some(params) = params {
+            toml::to_string(params)?
+        } else {
+            String::new()
+        };
         let lib = Library::new(path)?;
         let syms_res = rent_libloading::RentSymbols::try_new(
             Box::new(lib),
