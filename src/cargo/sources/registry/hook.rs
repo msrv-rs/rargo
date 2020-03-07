@@ -3,7 +3,7 @@ use crate::util::errors::CargoResult;
 use crate::util::config::Config;
 use libloading::Library;
 use rental::rental;
-use self::rent_libloading::RentSymbol;
+use self::rent_libloading::RentSymbols;
 use std::process::{Command, Child};
 use std::io::{BufRead, BufReader, Write};
 use std::process::Stdio;
@@ -12,10 +12,28 @@ rental! {
     mod rent_libloading {
         use libloading;
 
-        #[rental(deref_suffix)] // This struct will deref to the Deref::Target of Symbol.
-        pub struct RentSymbol<S: 'static> {
+        #[rental] // This struct will deref to the Deref::Target of Symbol.
+        pub(crate) struct RentSymbols {
             lib: Box<libloading::Library>, // Library is boxed for StableDeref.
-            sym: libloading::Symbol<'lib, S>, // The 'lib lifetime borrows lib.
+            symbols: super::Symbols<'lib>,
+        }
+    }
+}
+
+pub(crate) struct Symbols<'lib> {
+    sym_init: libloading::Symbol<'lib, extern fn() -> * mut ()>,
+    sym_query: libloading::Symbol<'lib, extern fn(ctx: * mut (), query: * const u8, len: usize) -> u32>,
+    sym_delete: libloading::Symbol<'lib, extern fn(* mut ())>,
+}
+
+impl<'lib> Symbols<'lib> {
+    fn new(lib: &'lib libloading::Library) -> libloading::Result<Self> {
+        unsafe {
+            Ok(Self {
+                sym_init: lib.get(b"plugin_init")?,
+                sym_query: lib.get(b"plugin_query")?,
+                sym_delete: lib.get(b"plugin_delete")?,
+            })
         }
     }
 }
@@ -62,28 +80,31 @@ impl Hook {
     }
 }
 
-
 struct HookPlugin {
-    sym: RentSymbol<extern fn(query: * const u8, len: usize) -> u32>,
+    syms: RentSymbols,
+    plugin_ctx: * mut (),
 }
 
 impl HookPlugin {
     fn new(path: &str) -> CargoResult<Self> {
         let lib = Library::new(path)?;
-        let sym_res = rent_libloading::RentSymbol::try_new(
+        let syms_res = rent_libloading::RentSymbols::try_new(
             Box::new(lib),
-            |lib| unsafe { lib.get::<extern fn(query: * const u8, len: usize) -> u32>(b"query") });
-        let sym = if let Ok(sym) = sym_res {
-            sym
+            |lib| Symbols::new(lib),
+            );
+        let syms = if let Ok(syms) = syms_res {
+            syms
         } else {
             anyhow::bail!("error during library loading");
         };
+        let plugin_ctx = syms.rent(|syms|(syms.sym_init)());
         Ok(Self {
-            sym,
+            syms,
+            plugin_ctx,
         })
     }
     fn query(&self, s :&str) -> u32 {
-        (self.sym)(s.as_ptr(), s.len())
+        self.syms.rent(|syms| (syms.sym_query)(self.plugin_ctx, s.as_ptr(), s.len()))
     }
     fn hook(&mut self, id: PackageId) -> CargoResult<bool> {
         let req = serde_json::to_string(&id)?;
@@ -93,6 +114,12 @@ impl HookPlugin {
             0 => Ok(false),
             v => anyhow::bail!("wrong code {}", v),
         }
+    }
+}
+
+impl Drop for HookPlugin {
+    fn drop(&mut self) {
+        self.syms.rent(|syms| (syms.sym_delete)(self.plugin_ctx));
     }
 }
 
