@@ -7,6 +7,7 @@ use self::rent_libloading::RentSymbols;
 use std::process::{Command, Child};
 use std::io::{BufRead, BufReader, Write};
 use std::process::Stdio;
+use std::ffi::c_void;
 
 rental! {
     mod rent_libloading {
@@ -21,9 +22,9 @@ rental! {
 }
 
 pub(crate) struct Symbols<'lib> {
-    sym_init: libloading::Symbol<'lib, extern fn(params: * const u8, len: usize) -> * mut ()>,
-    sym_query: libloading::Symbol<'lib, extern fn(ctx: * mut (), query: * const u8, len: usize) -> u32>,
-    sym_delete: libloading::Symbol<'lib, extern fn(* mut ())>,
+    sym_init: libloading::Symbol<'lib, extern fn(params: * const u8, len: usize) -> * mut c_void>,
+    sym_query: libloading::Symbol<'lib, extern fn(ctx: * mut c_void, query: * const u8, len: usize) -> u32>,
+    sym_delete: libloading::Symbol<'lib, extern fn(* mut c_void)>,
 }
 
 impl<'lib> Symbols<'lib> {
@@ -91,7 +92,7 @@ impl Hook {
 
 struct HookPlugin {
     syms: RentSymbols,
-    plugin_ctx: * mut (),
+    plugin_ctx: * mut c_void,
 }
 
 impl HookPlugin {
