@@ -21,7 +21,7 @@ rental! {
 }
 
 pub(crate) struct Symbols<'lib> {
-    sym_init: libloading::Symbol<'lib, extern fn() -> * mut ()>,
+    sym_init: libloading::Symbol<'lib, extern fn(params: * const u8, len: usize) -> * mut ()>,
     sym_query: libloading::Symbol<'lib, extern fn(ctx: * mut (), query: * const u8, len: usize) -> u32>,
     sym_delete: libloading::Symbol<'lib, extern fn(* mut ())>,
 }
@@ -42,8 +42,13 @@ impl<'lib> Symbols<'lib> {
 #[serde(tag = "kind")]
 #[serde(rename_all = "lowercase")]
 enum HookConfig {
-    Process { path: String },
-    Plugin { path: String },
+    Process {
+        path: String,
+    },
+    Plugin {
+        path: String,
+        params: Option<toml::Value>,
+    },
 }
 
 pub struct Hook {
@@ -61,8 +66,12 @@ impl Hook {
         let hk_cfg_opt = config.get::<Option<HookConfig>>("resolver_hook")?;
         let kind = if let Some(hk_cfg) = hk_cfg_opt {
             match hk_cfg {
-                HookConfig::Process { path } => HookKind::Process(HookProcess::new(&path)?),
-                HookConfig::Plugin { path } => HookKind::Plugin(HookPlugin::new(&path)?),
+                HookConfig::Process { path } => {
+                    HookKind::Process(HookProcess::new(&path)?)
+                },
+                HookConfig::Plugin { path, params } => {
+                    HookKind::Plugin(HookPlugin::new(&path, &params)?)
+                },
             }
         } else {
             HookKind::None
@@ -86,18 +95,19 @@ struct HookPlugin {
 }
 
 impl HookPlugin {
-    fn new(path: &str) -> CargoResult<Self> {
+    fn new(path: &str, params: &Option<toml::Value>) -> CargoResult<Self> {
+        let params_str = toml::to_string(params)?;
         let lib = Library::new(path)?;
         let syms_res = rent_libloading::RentSymbols::try_new(
             Box::new(lib),
             |lib| Symbols::new(lib),
-            );
+        );
         let syms = if let Ok(syms) = syms_res {
             syms
         } else {
             anyhow::bail!("error during library loading");
         };
-        let plugin_ctx = syms.rent(|syms|(syms.sym_init)());
+        let plugin_ctx = syms.rent(|syms|(syms.sym_init)(params_str.as_ptr(), params_str.len()));
         Ok(Self {
             syms,
             plugin_ctx,
@@ -127,7 +137,6 @@ struct HookProcess {
     chld: Child,
     stdout: Box<dyn BufRead + Send>,
 }
-
 impl HookProcess {
     fn new(path: &str) -> CargoResult<Self> {
         let mut chld = Command::new(path)
